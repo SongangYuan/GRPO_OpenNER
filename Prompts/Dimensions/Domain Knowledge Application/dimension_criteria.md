@@ -1,0 +1,5 @@
+- Score 10: Applies domain knowledge accurately and deeply to justify decisions; shows clear understanding of domain conventions and uses them effectively.
+- Score 7–9: Uses domain knowledge in a generally correct way but with limited depth or incomplete coverage.
+- Score 4–6: Mentions domain context superficially; explanations lack depth or precision.
+- Score 1–3: Misapplies domain knowledge or uses incorrect concepts that undermine decisions.
+- Score 0: No domain knowledge applied or it is entirely wrong and harmful.

@@ -1,0 +1,5 @@
+- Score 10: Clear, concise, and professional writing; terminology is accurate; structure is coherent; no grammar or ambiguity issues.
+- Score 7–9: Generally clear and correct, with minor issues in wording or structure.
+- Score 4–6: Understandable but with noticeable clarity/precision issues that hinder evaluation.
+- Score 1–3: Unclear, imprecise, or poorly structured writing that confuses the reasoning.
+- Score 0: Incoherent or severely flawed language that prevents meaningful evaluation.

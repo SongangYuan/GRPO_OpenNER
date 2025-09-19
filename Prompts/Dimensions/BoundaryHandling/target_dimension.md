@@ -1,0 +1,2 @@
+Name: Boundary Handling
+Definition: Evaluate whether the analysis explicitly explains how entity boundaries are determined (what to include/exclude), especially when boundaries are ambiguous or boundary errors are likely. Provide rationale for the selected span and consider plausible alternatives.

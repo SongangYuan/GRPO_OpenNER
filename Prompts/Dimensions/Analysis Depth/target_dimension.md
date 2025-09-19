@@ -1,0 +1,2 @@
+Name: Analysis Depth
+Definition: Evaluate whether the analysis goes beyond surface-level keyword matching to explore contextual relations, implicit semantics, and reasoning that supports entity identification.

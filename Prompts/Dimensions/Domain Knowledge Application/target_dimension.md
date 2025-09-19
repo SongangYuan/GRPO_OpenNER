@@ -1,0 +1,2 @@
+Name: Domain Knowledge Application
+Definition: Evaluate whether the analysis uses appropriate domain-specific knowledge (terminology, conventions, typical patterns) to support correct entity recognition and disambiguation.

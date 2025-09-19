@@ -1,0 +1,5 @@
+- Score 10: Thoroughly considers multiple interpretations/candidates, compares them with evidence, and justifies the final decision.
+- Score 7–9: Considers more than one perspective but comparison or justification lacks completeness.
+- Score 4–6: Mentions alternatives without real comparison or evidence-based trade-offs.
+- Score 1–3: Ignores plausible alternatives or compares them incorrectly.
+- Score 0: Single-track thinking with no alternative consideration.

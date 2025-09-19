@@ -1,0 +1,5 @@
+- Score 10: Deep, nuanced analysis that uncovers implicit semantics and context; provides strong reasoning beyond surface clues.
+- Score 7–9: Solid analysis with some depth, though certain aspects remain superficial or unexplored.
+- Score 4–6: Mostly surface-level observations with limited semantic exploration.
+- Score 1–3: Shallow or incorrect analysis that misses key contextual/semantic factors.
+- Score 0: No meaningful analysis beyond trivial cues.

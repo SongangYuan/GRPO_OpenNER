@@ -1,0 +1,5 @@
+- Score 10: Fully consistent analysis that clearly supports the final NER result or explicitly justifies deviations.
+- Score 7–9: Generally consistent with minor unexplained differences.
+- Score 4–6: Partially consistent; several points are not well supported by the analysis.
+- Score 1–3: Largely inconsistent or contradictory.
+- Score 0: No consistency between analysis and result.
