@@ -11,6 +11,7 @@ import re
 import numpy as np
 from typing import Union, Dict, Any, List
 import logging
+from llm_scoring import evaluate_dimensions
 
 # 初始化模块级日志记录器（避免依赖外部工程的日志配置）
 logger = logging.getLogger("custom_reward")
@@ -282,96 +283,6 @@ def _truncate_for_log(obj, max_len: int = 1200) -> str:
     return s
 
 
-def compute_ner_score(solution_str: str, ground_truth: Union[List[str], str, Dict[str, Any]], data_source: str="", extra_info=None) -> float:
-    """
-    计算NER任务的奖励分数
-    """
-    # 记录所有输入参数，便于调试（截断长文本）
-    logger.info("== NER 奖励输入日志 v2 ==")
-    logger.info("输入参数：")
-    logger.info(f"  回应文本（solution_str）: {_truncate_for_log(solution_str, 800)}")
-    logger.info(f"  标准答案（ground_truth）: {_truncate_for_log(ground_truth, 400)}")
-    logger.info(f"  数据源（data_source）: {data_source}")
-    logger.info(f"  额外信息（extra_info）: {_truncate_for_log(extra_info, 600)}")
-    logger.info(f"  额外信息类型: {type(extra_info).__name__}")
-
-    # 提取预测的实体
-    predicted_entities = extract_ner_entities(solution_str)
-
-    # 处理ground_truth格式，支持多种键与形式
-    ground_truth_entities: List[str] = []
-    if isinstance(ground_truth, dict):
-        # 优先常见键
-        for k in ("entities", "labels", "items", "gt", "ground_truth"):
-            v = ground_truth.get(k)
-            if isinstance(v, list):
-                ground_truth_entities = [str(x).strip() for x in v if str(x).strip()]
-                break
-        else:
-            # 合并字典中所有列表值
-            merged: List[str] = []
-            for v in ground_truth.values():
-                if isinstance(v, list):
-                    merged.extend([str(x).strip() for x in v if str(x).strip()])
-            ground_truth_entities = merged
-    elif isinstance(ground_truth, str):
-        s = ground_truth.strip()
-        try:
-            import json
-            parsed = json.loads(s)
-            if isinstance(parsed, list):
-                ground_truth_entities = [str(x).strip() for x in parsed if str(x).strip()]
-            elif isinstance(parsed, dict):
-                tmp: List[str] = []
-                for k in ("entities", "labels", "items", "gt", "ground_truth"):
-                    v = parsed.get(k)
-                    if isinstance(v, list):
-                        tmp = [str(x).strip() for x in v if str(x).strip()]
-                        break
-                if not tmp:
-                    for v in parsed.values():
-                        if isinstance(v, list):
-                            tmp.extend([str(x).strip() for x in v if str(x).strip()])
-                ground_truth_entities = tmp
-            else:
-                ground_truth_entities = [s] if s else []
-        except Exception:
-            # 支持逗号分割
-            parts = [p.strip().strip('"').strip("'") for p in s.strip('[]').split(",")]
-            ground_truth_entities = [p for p in parts if p]
-    elif isinstance(ground_truth, list):
-        ground_truth_entities = [str(x).strip() for x in ground_truth if str(x).strip()]
-    else:
-        ground_truth_entities = []
-
-    logger.info("处理后的实体（v2）：")
-    logger.info(f"  预测实体: {predicted_entities}")
-    logger.info(f"  标准实体: {ground_truth_entities}")
-
-    # 计算各个方面的分数
-    accuracy = evaluate_ner_accuracy(predicted_entities, ground_truth_entities)
-    analysis_quality = evaluate_ner_analysis_quality(solution_str)
-
-    # 计算加权总分
-    weights = {
-        'accuracy': 0.8,
-        'analysis': 0.2
-    }
-
-    final_score = (
-        weights['accuracy'] * accuracy +
-        weights['analysis'] * analysis_quality
-    )
-
-    # 确保分数在0-1之间
-    final_score = min(max(final_score, 0.0), 1.0)
-
-    logger.info("Final scores:")
-    logger.info(f"  accuracy={accuracy:.4f}, analysis_quality={analysis_quality:.4f}, final_score={final_score:.4f}")
-
-    return final_score
-
-
 def compute_ner_score_v2(solution_str: str, ground_truth: Union[List[str], str, Dict[str, Any]], data_source: str="", extra_info=None) -> float:
     """
     计算NER任务的奖励分数（v2：加权求和，宽松匹配）
@@ -528,18 +439,57 @@ def compute_ner_score_v2(solution_str: str, ground_truth: Union[List[str], str, 
     if not has_analysis:
         match_score = 0.0
 
+    # 计算 LLM 维度综合评分（evaluate_dimensions），容错处理；当没有 analysis 时，不调用大模型
+    if has_analysis:
+        try:
+            ana_match = re.search(r"<\s*analysis\s*>(.*?)<\s*/\s*analysis\s*>", str(solution_str), flags=re.IGNORECASE | re.DOTALL)
+            analysis_text = ana_match.group(1).strip() if ana_match else ""
+
+            # 原文文本优先从 extra_info 中提取（如果提供），否则回退到 analysis 或 solution_str
+            original_text = ""
+            if isinstance(extra_info, dict):
+                for key in ("original_text", "text", "input", "query", "ner_query", "context", "content"):
+                    v = extra_info.get(key)
+                    if isinstance(v, str) and v.strip():
+                        original_text = v.strip()
+                        break
+            elif isinstance(extra_info, str):
+                original_text = extra_info.strip()
+            if not original_text:
+                original_text = analysis_text or str(solution_str)
+
+            # 构造传递给 LLM 的 ner_result 和 gold_entities（字符串形式）
+            llm_ner = json.dumps(predicted_entities, ensure_ascii=False)
+            llm_gt = json.dumps(ground_truth_entities, ensure_ascii=False)
+
+            llm_out = evaluate_dimensions(
+                text=original_text,
+                analysis_content=analysis_text,
+                ner_result=llm_ner,
+                gold_entities=llm_gt,
+            )
+            llm_score = float(llm_out.get("normalized_score", 0.0))
+            if not (0.0 <= llm_score <= 1.0):
+                llm_score = max(0.0, min(1.0, llm_score))
+        except Exception as e:
+            logger.warning(f"evaluate_dimensions failed: {e}")
+            llm_score = 0.0
+    else:
+        llm_score = 0.0
+
     # 6) 打印诊断日志
     logger.info("诊断信息（v2-soft）：")
     logger.info(f"  soft_precision={p_soft:.4f}, soft_recall={r_soft:.4f}, match_score(soft_f1)={match_score:.4f}")
     logger.info(f"  analysis标签存在={has_analysis}, format_score={format_score:.2f}")
+    logger.info(f"  LLM维度归一化得分 normalized_score={llm_score:.4f}")
 
-    # 7) 最终得分：按权重线性组合（结果0.6 + 格式0.4）
-    final_score = 0.6 * match_score + 0.4 * format_score
+    # 7) 最终得分：按新权重线性组合（LLM 0.35 + 结果匹配 0.35 + 格式 0.30）
+    final_score = 0.35 * llm_score + 0.35 * match_score + 0.3 * format_score
 
     final_score = min(max(final_score, 0.0), 1.0)
 
     logger.info("最终得分（v2-soft）：")
-    logger.info(f"  match_score={match_score:.4f}, 格式得分={format_score:.2f}, 最终得分={final_score:.4f}")
+    logger.info(f"  llm_score={llm_score:.4f}, match_score={match_score:.4f}, 格式得分={format_score:.2f}, 最终得分={final_score:.4f}")
 
     return final_score
 
