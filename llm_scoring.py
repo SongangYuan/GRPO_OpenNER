@@ -12,6 +12,7 @@ import json
 import os
 import re
 from typing import Any, Dict, List
+from concurrent.futures import ThreadPoolExecutor
 
 from try_qwen import call_qwen
 from pathlib import Path
@@ -21,7 +22,7 @@ VALID_DIMENSION_NAMES = {
     "Boundary Handling",
     "Error Detection and Correction",
     "Domain Knowledge Application",
-    "Language Quality",
+    # "Language Quality",  # removed per user request
     "Analysis Depth",
     "Multi-perspective Thinking",
 }
@@ -92,15 +93,22 @@ def _build_messages(
 
 
 def _extract_json(text: str) -> Dict[str, Any]:
-    """Try best-effort extraction of a JSON object from model output."""
+    """Try best-effort extraction of a JSON object from model output.
+
+    Adds a metadata flag '__parse_ok' to indicate whether JSON parsing was successful.
+    This allows callers (e.g., dimension_detection) to decide on retry strategies.
+    When parsing fails, returns '__parse_error' with a brief diagnostic message.
+    """
     text = (text or "").strip()
+    err_msg = ""
     # First, try direct loading
     try:
         obj = json.loads(text)
         if isinstance(obj, dict):
+            obj.setdefault("__parse_ok", True)
             return obj
-    except Exception:
-        pass
+    except Exception as e:
+        err_msg = f"{type(e).__name__}: {e}"
 
     # Heuristic: take the largest {...} block
     start = text.find("{")
@@ -110,19 +118,25 @@ def _extract_json(text: str) -> Dict[str, Any]:
         try:
             obj = json.loads(candidate)
             if isinstance(obj, dict):
+                obj.setdefault("__parse_ok", True)
                 return obj
-        except Exception:
+        except Exception as e:
+            err_msg = f"{type(e).__name__}: {e}"
             # Try removing trailing commas (common LLM error)
             candidate2 = re.sub(r",\s*([}\]])", r"\1", candidate)
             try:
                 obj = json.loads(candidate2)
                 if isinstance(obj, dict):
+                    obj.setdefault("__parse_ok", True)
                     return obj
-            except Exception:
-                pass
+            except Exception as e2:
+                err_msg = f"{type(e2).__name__}: {e2}"
+    else:
+        if not err_msg:
+            err_msg = "No JSON object found in model output."
 
-    # Fallback to empty structure
-    return {"relevant_dimensions": []}
+    # Fallback to empty structure with explicit failure flag and error message
+    return {"relevant_dimensions": [], "__parse_ok": False, "__parse_error": err_msg}
 
 
 def _normalize_result(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -169,16 +183,37 @@ def dimension_detection(
         一个包含 "relevant_dimensions" 列表的字典，元素为：
         {"dimension_name": str, "relevance_reason": str}
     """
-    messages = _build_messages(
+    base_messages = _build_messages(
         text,
         analysis_content=analysis_content,
         ner_result=ner_result,
         gold_entities=gold_entities,
     )
-    # 温和但稳定的采样温度
-    answer = call_qwen(messages, temperature=0.2, enable_thinking=False)
-    parsed = _extract_json(answer)
-    normalized = _normalize_result(parsed)
+
+    # 当严格 JSON 解析失败时，利用错误信息在下一轮追加纠偏提示，让模型重新生成
+    max_retries = 2
+    last_parsed: Dict[str, Any] = {"relevant_dimensions": [], "__parse_ok": False}
+    feedback_msg: Dict[str, str] | None = None
+
+    for attempt in range(max_retries + 1):
+        messages = base_messages if feedback_msg is None else (base_messages + [feedback_msg])
+        answer = call_qwen(messages, temperature=0.2, enable_thinking=False)
+        parsed = _extract_json(answer)
+        last_parsed = parsed
+        if parsed.get("__parse_ok", False):
+            break
+        # 组装面向模型的纠偏提示，强调严格 JSON 与字段结构
+        err = parsed.get("__parse_error", "未知错误")
+        feedback_content = (
+            "上一次回答无法被解析为合法 JSON。\n"
+            f"解析错误: {err}\n"
+            "请重新仅输出一个严格的 JSON 对象，不要包含任何多余文本、解释或 Markdown。\n"
+            "输出结构必须为: {\"relevant_dimensions\": [ { \"dimension_name\": \"...\", \"relevance_reason\": \"...\" } ] }。\n"
+            "注意: dimension_name 与 relevance_reason 均为字符串；relevant_dimensions 是数组。"
+        )
+        feedback_msg = {"role": "user", "content": feedback_content}
+
+    normalized = _normalize_result(last_parsed)
     return normalized
 
 
@@ -205,7 +240,7 @@ _DIMENSION_FOLDER_MAP = {
     "Boundary Handling": "BoundaryHandling",
     "Error Detection and Correction": "Error Detection",
     "Domain Knowledge Application": "Domain Knowledge Application",
-    "Language Quality": "Language Quality",
+    # "Language Quality": "Language Quality",  # removed per user request
     "Analysis Depth": "Analysis Depth",
     "Multi-perspective Thinking": "Multi-perspective Thinking",
 }
@@ -459,18 +494,58 @@ def evaluate_dimensions(
     detected_order = sorted(mapped_detected)
     all_targets = required_order + detected_order
 
-    # Single model call for all dimensions - ner_query 与 text 相同
-    messages = _build_step2_messages_batch(
-        all_targets, text, text, analysis_content, ner_result, gold_entities
-    )
-    ans = call_qwen(messages, temperature=0.2, enable_thinking=False)
-    parsed_items = _extract_step2_batch_json(ans, all_targets)
-
-    # Annotate source and return
+    # Parallel per-dimension evaluation using multiple threads
+    def _score_one(dn: str) -> Dict[str, Any]:
+        msgs = _build_step2_messages(
+            dn, text, text, analysis_content, ner_result, gold_entities
+        )
+        ans_local = call_qwen(msgs, temperature=0.2, enable_thinking=False)
+        parsed = _extract_step2_json(ans_local)
+        # Normalize and pin the expected dimension name for deterministic downstream handling
+        reason = (parsed.get("reason") or "").strip()
+        try:
+            sc = parsed.get("score", 0)
+            if isinstance(sc, str):
+                sc = float(sc)
+            score_int = int(round(float(sc)))
+        except Exception:
+            score_int = 0
+        score_int = max(0, min(10, score_int))
+        model_name = parsed.get("dimension_name") or dn
+        return {
+            "dimension_name": dn,
+            "model_dimension_name": model_name,
+            "reason": reason,
+            "score": score_int,
+        }
+    
+    future_map = {}
+    results_map: Dict[str, Dict[str, Any]] = {}
+    if all_targets:
+        with ThreadPoolExecutor(max_workers=max_workers or 1) as ex:
+            for dn in all_targets:
+                future_map[dn] = ex.submit(_score_one, dn)
+            for dn in all_targets:
+                try:
+                    results_map[dn] = future_map[dn].result()
+                except Exception as e:
+                    results_map[dn] = {
+                        "dimension_name": dn,
+                        "model_dimension_name": dn,
+                        "reason": f"Evaluation failed: {e}",
+                        "score": 0,
+                    }
+    
+    # Assemble results in stable target order and annotate source
     results: List[Dict[str, Any]] = []
-    for item in parsed_items:
-        name = item.get("dimension_name", "")
-        item["source"] = "required" if name in required_names else "detected"
+    for dn in all_targets:
+        item = results_map.get(dn, {
+            "dimension_name": dn,
+            "model_dimension_name": dn,
+            "reason": "Missing result; default score 0 used.",
+            "score": 0,
+        })
+        item["source"] = "required" if dn in required_names else "detected"
         results.append(item)
 
     # Normalized total score in [0,1]

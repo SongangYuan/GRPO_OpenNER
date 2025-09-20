@@ -12,6 +12,7 @@ import datetime as dt
 import json
 import os
 from typing import Any, Dict, List
+import time
 
 from llm_scoring import evaluate_dimensions
 
@@ -96,7 +97,7 @@ def _run_and_collect(name: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
         analysis_content=cfg.get("analysis_content", ""),
         ner_result=cfg.get("ner_result", ""),
         gold_entities=cfg.get("gold_entities", ""),
-        max_workers=1,  # not used in single-prompt mode, keep for signature compatibility
+        max_workers=6,  # parallelize per-dimension scoring in step-2
     )
     return res
 
@@ -112,8 +113,24 @@ def main() -> int:
     md.append(f"# Evaluation Report - {ts}")
     md.append("")
 
-    for name, cfg in CASES.items():
+    # 准备进度条（优先使用 tqdm，如不可用则降级为普通迭代）
+    try:
+        from tqdm import tqdm  # type: ignore
+        _use_tqdm = True
+    except Exception:
+        tqdm = None  # type: ignore
+        _use_tqdm = False
+
+    items = list(CASES.items())
+    iterator = tqdm(items, desc="Evaluating cases") if _use_tqdm else items
+
+    for idx, (name, cfg) in enumerate(iterator, 1):
+        start = time.perf_counter()
         res = _run_and_collect(name, cfg)
+        elapsed = time.perf_counter() - start
+        if _use_tqdm:
+            iterator.set_postfix_str(f"{name}: {elapsed:.2f}s")
+
         # Build markdown section for this case
         md.append(f"## Case: {name}")
         md.append("")
@@ -130,6 +147,7 @@ def main() -> int:
         ev_dims = res.get("evaluated_dimensions", [])
         md.append(f"- Evaluated dimensions ({len(ev_dims)}): {', '.join(ev_dims)}")
         md.append(f"- Normalized score: {res.get('normalized_score')}")
+        md.append(f"- Elapsed: {elapsed:.2f}s")
         md.append("")
         md.append("**Dimension Scores**:")
         md.append("")
