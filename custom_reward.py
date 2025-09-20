@@ -379,45 +379,127 @@ def compute_ner_score_v2(solution_str: str, ground_truth: Union[List[str], str, 
         s = re.sub(r"^[^0-9a-z\u4e00-\u9fff]+|[^0-9a-z\u4e00-\u9fff]+$", "", s)
         return s
 
+    # 词元划分（用于中文与英文的粗粒度分词）
+    def _tokens(s: str) -> List[str]:
+        s = _normalize_entity(s)
+        toks = [t for t in re.split(r"[^0-9a-z\u4e00-\u9fff]+", s) if t]
+        # 过滤完全为数字的token，避免数字噪声
+        toks = [t for t in toks if not t.isdigit()]
+        return toks
+
+    def _acronym_of(phrase: str) -> str:
+        # 仅英文首字母缩写生成
+        letters = re.findall(r"[a-z]+", phrase.lower())
+        return "".join(w[0] for w in letters if w)
+
+    def _is_acronym_match(a: str, b: str) -> bool:
+        # 去除非字母字符
+        a_clean = re.sub(r"[^a-z]", "", a.lower())
+        b_clean = re.sub(r"[^a-z]", "", b.lower())
+        if not a_clean or not b_clean:
+            return False
+        # a 是否为 b 的英文首字母缩写 或 反之
+        if len(a_clean) <= 8 and a_clean == _acronym_of(b):
+            return True
+        if len(b_clean) <= 8 and b_clean == _acronym_of(a):
+            return True
+        return False
+
+    def _token_jaccard(a: str, b: str) -> float:
+        ta, tb = set(_tokens(a)), set(_tokens(b))
+        if not ta and not tb:
+            return 1.0
+        if not ta or not tb:
+            return 0.0
+        inter = len(ta & tb)
+        union = len(ta | tb)
+        return inter / union if union else 0.0
+
     def _sim(a: str, b: str) -> float:
         a_n, b_n = _normalize_entity(a), _normalize_entity(b)
         if not a_n and not b_n:
             return 1.0
         if not a_n or not b_n:
             return 0.0
-        # 如果其中一个是另一个的子串，提升一点分数（更宽松）
+
+        # 特判：英文首字母缩写（如 US vs United States）
+        if _is_acronym_match(a_n, b_n):
+            return 0.95
+
+        # 子串关系：仅按覆盖比例给分，显著降低“前后缀修饰”的高分问题（如"uncharted planet" vs "planet"）
         if a_n in b_n or b_n in a_n:
-            # 找到更长/更短的串以便判断是否为“合并/复合”实体
             longer, shorter = (a_n, b_n) if len(a_n) >= len(b_n) else (b_n, a_n)
             ratio_len = len(shorter) / len(longer)
-            base = 0.8 + 0.2 * ratio_len  # [0.8, 1.0]
-            # 复合实体惩罚：当更长的串包含括号/斜杠/“and”/&等并列或别名指示符时，下调匹配
+            base = ratio_len  # [0,1]，覆盖越充分分数越高
+            # 复合实体惩罚：并列/别名指示符降低分数
             if re.search(r"[()\/]|\b(and|&|aka)\b", longer):
-                base *= 0.75  # 对合并表达（如 “United States (US)”）进行惩罚，避免过高得分
-            return min(1.0, base)
-        return difflib.SequenceMatcher(None, a_n, b_n).ratio()
+                base *= 0.75
+            return max(0.0, min(1.0, base))
+
+        # 一般情况：结合 token Jaccard 与字符级相似度
+        jacc = _token_jaccard(a_n, b_n)
+        char_sim = difflib.SequenceMatcher(None, a_n, b_n).ratio()
+        if jacc > 0:
+            sim = 0.6 * jacc + 0.4 * char_sim
+        else:
+            # 当词元无交集时，限制上限，避免不同概念仅因字符重合而获得高分（如 Africa vs America）
+            sim = min(0.35, 0.35 * char_sim)
+        return max(0.0, min(1.0, sim))
 
     def _soft_precision_recall(pred: List[str], gt: List[str]) -> (float, float):
-        if not pred and not gt:
+        """
+        先进行“硬匹配”（仅严格等价，严格字面相同才计入），命中数记为 k；
+        再对剩余未匹配的元素进行 soft 匹配，并与 k 结合形成最终的 soft precision/recall。
+        注意：首字母缩写等价不再属于硬匹配，在 soft 阶段通过 _sim 的 0.95 部分分实现。
+        """
+        # 归一化副本，保留索引
+        pred_norm = [_normalize_entity(p) for p in pred]
+        gt_norm = [_normalize_entity(g) for g in gt]
+
+        n_pred, n_gt = len(pred_norm), len(gt_norm)
+        if n_pred == 0 and n_gt == 0:
             return 1.0, 1.0
-        # soft precision: 每个预测与其最相近的 GT 相似度的平均
-        if pred:
-            p_scores = []
-            for p in pred:
-                best = max((_sim(p, g) for g in gt), default=0.0)
-                p_scores.append(best)
-            p_soft = float(np.mean(p_scores)) if p_scores else (1.0 if not gt else 0.0)
-        else:
-            p_soft = 1.0 if not gt else 0.0
-        # soft recall: 每个 GT 与其最相近的 预测 相似度的平均
-        if gt:
-            r_scores = []
-            for g in gt:
-                best = max((_sim(g, p) for p in pred), default=0.0)
-                r_scores.append(best)
-            r_soft = float(np.mean(r_scores)) if r_scores else (1.0 if not pred else 0.0)
-        else:
-            r_soft = 1.0
+        if n_pred == 0:
+            return 0.0, 0.0
+        if n_gt == 0:
+            return 0.0, 1.0
+
+        used_gt = set()
+        matched_pred = set()
+        k = 0
+        # 第一步：硬匹配（严格等价）
+        for i, p_n in enumerate(pred_norm):
+            for j, g_n in enumerate(gt_norm):
+                if j in used_gt:
+                    continue
+                if p_n == g_n:
+                    used_gt.add(j)
+                    matched_pred.add(i)
+                    k += 1
+                    break
+
+        # 第二步：对剩余未匹配项进行 soft 匹配
+        resid_pred_idx = [i for i in range(n_pred) if i not in matched_pred]
+        resid_gt_idx = [j for j in range(n_gt) if j not in used_gt]
+
+        # 计算 residual precision 部分：每个剩余预测对剩余GT的最佳相似度
+        sum_p_resid = 0.0
+        for i in resid_pred_idx:
+            best = 0.0
+            for j in resid_gt_idx:
+                best = max(best, _sim(pred[i], gt[j]))
+            sum_p_resid += best
+        # 计算 residual recall 部分：每个剩余GT对剩余预测的最佳相似度
+        sum_r_resid = 0.0
+        for j in resid_gt_idx:
+            best = 0.0
+            for i in resid_pred_idx:
+                best = max(best, _sim(gt[j], pred[i]))
+            sum_r_resid += best
+
+        # 汇总：把“硬命中”视为分值1.0 的配对，加入平均
+        p_soft = (k + sum_p_resid) / n_pred if n_pred > 0 else (1.0 if n_gt == 0 else 0.0)
+        r_soft = (k + sum_r_resid) / n_gt if n_gt > 0 else 1.0
         return p_soft, r_soft
 
     p_soft, r_soft = _soft_precision_recall(predicted_entities, ground_truth_entities)
@@ -428,7 +510,7 @@ def compute_ner_score_v2(solution_str: str, ground_truth: Union[List[str], str, 
 
     # 对非完美匹配做轻微全局下调，以加大与完全匹配的区分度（不影响满分=1.0）
     if 0.0 < match_score < 1.0:
-        PARTIAL_CALIBRATION = 0.93
+        PARTIAL_CALIBRATION = 0.95  # 稍微抬高整体分布，相比之前的0.93略高一点
         match_score *= PARTIAL_CALIBRATION
 
     # 5) 计算格式得分：analysis 缺失 => 0.5；存在 => 1.0（仅在 ner_result 合规时）

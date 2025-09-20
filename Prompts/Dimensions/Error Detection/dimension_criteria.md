@@ -1,5 +1,5 @@
-- Score 10: Proactively identifies key ambiguities/errors and provides concrete, feasible correction strategies supported by evidence.
-- Score 7–9: Identifies some ambiguities/errors and suggests fixes, but coverage or justification is incomplete.
-- Score 4–6: Vaguely mentions possible issues without clear detection or actionable correction steps.
-- Score 1–3: Misidentifies issues or proposes fixes that are incorrect or irrelevant.
-- Score 0: No awareness of potential errors or ambiguities.
+- Score 10: Proactively identifies key ambiguities/errors with clear evidence and proposes concrete, feasible fixes; explains expected impact on NER.
+- Score 7–9: Identifies relevant issues with some support and plausible fixes, but coverage/justification is incomplete.
+- Score 4–6: Vague mentions of issues without clear detection or actionable steps; weak linkage to evidence.
+- Score 1–3: Misidentifies issues or proposes irrelevant/incorrect fixes.
+- Score 0: No awareness of errors or ambiguities.

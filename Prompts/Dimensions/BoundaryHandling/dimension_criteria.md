@@ -1,5 +1,5 @@
-- Score 10: Thoroughly explains boundary choices for each entity, including why specific tokens are included/excluded; considers multiple plausible spans and justifies the final choice.
-- Score 7–9: Explains most boundary choices, but some entities are discussed briefly or not all plausible spans are considered.
-- Score 4–6: Mentions boundary issues only superficially, lacks concrete explanation, or boundary discussion conflicts with the final result.
-- Score 1–3: Mentions boundaries but explanations are incorrect or not grounded in the text, leading to weak justification.
-- Score 0: No discussion of entity boundaries, or boundary handling is clearly wrong.
+- Score 10: Thoroughly explains boundary choices for each entity with explicit evidence; considers plausible alternative spans and justifies inclusions/exclusions; consistent with gold entities.
+- Score 7–9: Explains most boundary choices with reasonable support, but some entities are brief or alternatives not fully evaluated; no major inconsistencies.
+- Score 4–6: Mentions boundary issues superficially or inconsistently; limited evidence or conflicts with the final result appear.
+- Score 1–3: Incorrect or weak boundary reasoning not grounded in the text; significant justification gaps.
+- Score 0: No discussion of entity boundaries or clearly wrong handling.

@@ -1,5 +1,5 @@
-- Score 10: Fully consistent analysis that clearly supports the final NER result or explicitly justifies deviations.
-- Score 7–9: Generally consistent with minor unexplained differences.
-- Score 4–6: Partially consistent; several points are not well supported by the analysis.
-- Score 1–3: Largely inconsistent or contradictory.
+- Score 10: Clear, explicit linkage between analysis and final NER result; addresses any deviations from gold entities with strong justification.
+- Score 7–9: Generally consistent with minor unexplained differences; most claims align with result/context.
+- Score 4–6: Partially consistent; several claims are weakly supported or only loosely connected to the result.
+- Score 1–3: Largely inconsistent or contradictory reasoning.
 - Score 0: No consistency between analysis and result.

@@ -1,5 +1,5 @@
-- Score 10: Effectively utilizes contextual clues and document-specific signals to guide recognition and disambiguation.
-- Score 7–9: Uses context appropriately but misses some relevant cues or connections.
-- Score 4–6: Limited or superficial use of context; mostly relies on surface tokens.
-- Score 1–3: Misinterprets context or fails to apply it meaningfully.
-- Score 0: No use of context.
+- Score 10: Precisely leverages contextual clues with explicit references; supports disambiguation and decisions consistently with the text and query.
+- Score 7–9: Uses context appropriately with some evidence, but misses certain cues or connections; no major misreadings.
+- Score 4–6: Limited or superficial context use; relies on surface tokens; weak or implied evidence.
+- Score 1–3: Misinterprets context or applies it incorrectly, undermining decisions.
+- Score 0: No meaningful use of context.

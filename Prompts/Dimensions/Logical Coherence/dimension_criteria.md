@@ -1,5 +1,5 @@
-- Score 10: Strongly coherent reasoning with explicit, traceable steps and sound transitions.
-- Score 7–9: Mostly coherent with minor gaps or weak transitions.
-- Score 4–6: Basic structure is present but reasoning has noticeable gaps or jumps.
-- Score 1–3: Poorly connected reasoning that is hard to follow.
-- Score 0: Illogical or inconsistent reasoning.
+- Score 10: Strongly coherent, step-by-step reasoning with traceable premises and justified transitions; no hidden leaps or contradictions.
+- Score 7–9: Mostly coherent with minor gaps; transitions are generally sound though some steps are implicit.
+- Score 4–6: Basic structure present but noticeable gaps or jumps reduce clarity; partial inconsistencies may occur.
+- Score 1–3: Poorly connected reasoning that is hard to follow or internally inconsistent.
+- Score 0: Illogical or contradictory reasoning.
