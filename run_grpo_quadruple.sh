@@ -22,9 +22,9 @@ MAX_STEP=25000
 LORA_R=16                       # 更小LoRA，训练更快
 LORA_ALPHA=32                   # 对应调整
 LR=5e-5                         # 更保守学习率
-MAX_PROMPT_LEN=512              # 限制输入长度，降低KV缓存
-MAX_COMPLETION_LEN=256          # 限制生成长度，降低KV缓存
-NUM_GENERATIONS=2               # 每个样本的生成数，越大占用越高
+MAX_PROMPT_LEN=384              # 限制输入长度，降低KV缓存和内存
+MAX_COMPLETION_LEN=128          # 限制生成长度，降低KV缓存和内存
+NUM_GENERATIONS=2               # GRPO最小需要2条生成以计算优势
 
 # ====== 关键环境变量 ======
 export CUDA_VISIBLE_DEVICES=0,1,2,3
@@ -38,10 +38,19 @@ echo "学习率: $LR"
 echo "单卡批次: ${PER_DEVICE_BATCH_SIZE} x ${GRAD_ACC} = $((PER_DEVICE_BATCH_SIZE*GRAD_ACC))"
 echo "总批次大小: $((PER_DEVICE_BATCH_SIZE*GRAD_ACC*4)) (四卡)"
 echo "使用 DeepSpeed 配置: $DS_CONFIG"
+# 做法A：由 Trainer/Accelerate 通过 --gradient_accumulation_steps 指定，DeepSpeed 配置用 auto 跟随
+if [ -f "$DS_CONFIG" ]; then
+  if grep -q '"gradient_accumulation_steps"\s*:\s*"auto"' "$DS_CONFIG"; then
+    echo "DeepSpeed 梯度累积步数: auto（将跟随 --gradient_accumulation_steps=$GRAD_ACC）"
+  else
+    echo "⚠️ 警告：$DS_CONFIG 中未设置 \"gradient_accumulation_steps\": \"auto\"，可能覆盖为固定值并触发不一致警告"
+  fi
+fi
+
 echo "长度设置: prompt=${MAX_PROMPT_LEN}, completion=${MAX_COMPLETION_LEN}, generations=${NUM_GENERATIONS}"
 
 # ====== 启动命令 ======
-torchrun --nproc_per_node=4 --master_port 29501 /private/DAPO/verl/verl-main/recipe/dapo/main_grpo.py \
+torchrun --nproc_per_node=4 --master_port 29501 "$SCRIPT_DIR/main_grpo_quadruple.py" \
 --deepspeed "$DS_CONFIG" \
 --model_name_or_path "$MODEL_NAME_OR_PATH" \
 --dataset_path "$DATASET_JSONL" \
@@ -61,7 +70,7 @@ torchrun --nproc_per_node=4 --master_port 29501 /private/DAPO/verl/verl-main/rec
 --save_total_limit 5 \
 --logging_steps 50 \
 --save_steps 2000 \
---dataloader_num_workers 8 \
+--dataloader_num_workers 0 \
 --gradient_checkpointing true \
 --gradient_checkpointing_kwargs '{"use_reentrant": false}' \
 --dataloader_pin_memory true \

@@ -294,7 +294,7 @@ def compute_ner_score_v2(solution_str: str, ground_truth: Union[List[str], str, 
     import json
     import difflib
 
-    logger.info("== NER Reward Input Logging V2 (soft match) ==")
+    logger.info("== NER Reward Input Logging V2 (soft match) with llm score==")
     logger.info(f"Input parameters:")
     logger.info(f"  solution_str: {_truncate_for_log(solution_str, 800)}")
     logger.info(f"  ground_truth: {_truncate_for_log(ground_truth, 400)}")

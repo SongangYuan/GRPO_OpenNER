@@ -353,10 +353,14 @@ def _build_step2_messages_batch(
         "- Output JSON only. Do NOT include any other text or Markdown."
     )
 
+    # Avoid f-string expressions containing backslashes by precomputing the joined text
+    sections_text = "\n\n".join(sections)
+
+
     user_content = (
         f"{filled_bg}\n\n"
         f"## Dimensions to Evaluate\n"
-        f"{'\n\n'.join(sections)}\n\n"
+        f"{sections_text}\n\n"
         f"{multi_task_instr}\n\n"
         f"{essential_notice}"
     )

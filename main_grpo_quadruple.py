@@ -269,15 +269,52 @@ def setup_logging():
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)
     root_logger.addHandler(file_handler)
-
+    
     # 降低 httpx/httpcore 日志噪声（仅 WARNING 及以上）
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-
+    
     print(f"日志将保存到: {log_file}")
     logging.info(f"开始GRPO训练 - 日志文件: {log_file}")
-
+    
     return log_file
+
+# ========= 兼容修复：确保每个rank上的loss都带有grad_fn =========
+class PatchedGRPOTrainer(GRPOTrainer):
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        # 兼容不同 TRL 版本：不强制传 return_outputs，保留额外关键字参数（如 num_items_in_batch）
+        try:
+            result = super().compute_loss(model, inputs, **kwargs)
+        except TypeError:
+            # 回退：某些版本父类不接受额外关键字参数
+            result = super().compute_loss(model, inputs)
+        
+        if isinstance(result, tuple) and len(result) == 2:
+            loss, outputs = result
+        else:
+            loss, outputs = result, None
+        
+        # 将纯标量/float转换为Tensor
+        if not torch.is_tensor(loss):
+            device = next(model.parameters()).device
+            dtype = torch.bfloat16 if getattr(self.args, "bf16", False) else torch.float32
+            try:
+                loss = torch.tensor(float(loss), device=device, dtype=dtype)
+            except Exception:
+                loss = torch.as_tensor(loss, device=device, dtype=dtype)
+        
+        # 如果该rank上的loss没有梯度，附着一个零梯度图，避免DeepSpeed报错
+        if not loss.requires_grad:
+            for p in model.parameters():
+                if p.requires_grad:
+                    loss = loss + p.sum() * 0.0
+                    if not hasattr(self, "_warned_loss_no_grad"):
+                        logging.warning("检测到某些rank当前step的loss不带grad_fn，已附着零梯度图以保证backward正常。这通常由空micro-batch或分布式聚合不一致引起。")
+                        self._warned_loss_no_grad = True
+                    break
+        
+        return (loss, outputs) if return_outputs else loss
+
 
 def main():
     parser = HfArgumentParser((ModelArguments, DataArguments, GRPOConfig, LoggingArguments))
@@ -285,6 +322,13 @@ def main():
 
     # 设置日志（包括文件输出）
     log_file = setup_logging()
+
+    # 强制开启 drop_last，降低多卡下空batch概率
+    try:
+        if hasattr(training_args, "dataloader_drop_last"):
+            training_args.dataloader_drop_last = True
+    except Exception:
+        pass
 
     # 记录训练参数
     logging.info("=" * 50)
@@ -391,9 +435,9 @@ def main():
     )
     logging.info("数据预处理完成")
 
-    # 创建Trainer
+    # 创建Trainer（使用修复版）
     logging.info("正在创建GRPO Trainer...")
-    trainer = GRPOTrainer(
+    trainer = PatchedGRPOTrainer(
         model=model,
         args=training_args,
         train_dataset=processed_dataset,
